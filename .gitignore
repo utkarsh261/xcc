@@ -3,4 +3,4 @@
 tmp*
 a.out
 xcc
-valgrind*
+valgrind-out.txt
