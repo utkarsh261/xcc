@@ -20,4 +20,5 @@ Testing as of now is a simple bash script, to add more tests, edit [test.sh](htt
 
 **Current Progress:**
 
-* Supports basic arithmetic operations  (+. -, *, /).
+* Supports basic arithmetic operations  (+. -, *, /)
+* Comparison operators (<, <=, >, >=, ==, , !=)
