@@ -95,7 +95,7 @@ Token *new_token(TokenKind kind, Token *cur, char *str) {
 }
 
 /** tokenize the user input and return it, basically creation of a liked list
- * **/
+ **/
 Token *tokenize() {
   char *p = user_input;
   Token head;
@@ -171,6 +171,7 @@ Node *new_node_num(int val) {
 Node *expr();
 Node *mul();
 Node *primary();
+Node *unary();
 
 // expr = mul ("+" mul | "-" mul)*
 Node *expr() {
@@ -188,19 +189,30 @@ Node *expr() {
 }
 
 // mul = primary ("*" primary | "/" primary)*
+// with unary operations : mul = unary ("*" unary | "/" unary)*
 Node *mul() {
-  Node *node = primary();
+  Node *node = unary();
   for (;;) {
     if (consume('*')) {
-      node = new_node(ND_MUL, node, primary());
+      node = new_node(ND_MUL, node, unary());
     } else if (consume('/')) {
-      node = new_node(ND_DIV, node, primary());
+      node = new_node(ND_DIV, node, unary());
     } else {
       return node;
     }
   }
 }
 
+// unary = ("+" | "-")? primary
+Node *unary(){
+  if(consume('+')){
+    return primary();
+  }
+  if(consume('-')){
+    return new_node(ND_SUB, new_node_num(0), primary());
+  }
+  return primary();
+}
 // primary = "(" expr ")" | num
 Node *primary() {
   // if next token is "(" it should be a "(" expr ")"
