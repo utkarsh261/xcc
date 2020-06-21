@@ -4,6 +4,8 @@ xcc is an attempt to write a basic C compiler, based on *Rui Ueyama's* awesome [
 
 Supports x86_64 Linux only, you can use [WSL](https://docs.microsoft.com/en-us/windows/wsl/install-win10?redirectedfrom=MSDN) to run on windows platform.
 
+Source contains a lot of comments, to make it is easy to understand what's going on.
+
 Build
 ===
 Simply run make to build.
@@ -22,3 +24,4 @@ Testing as of now is a simple bash script, to add more tests, edit [test.sh](htt
 
 * Supports basic arithmetic operations  (+. -, *, /)
 * Comparison operators (<, <=, >, >=, ==, , !=)
+* Supports single character variable and return statements
