@@ -146,8 +146,11 @@ Token *tokenize() {
     }
 
     // Identifier
-    if ('a' <= *p && *p <= 'z') {
-      cur = new_token(TK_IDENT, cur, p++, 1);
+    if (is_alpha(*p)) {
+      char *q = p++;
+      while (is_alnum(*p))
+        p++;
+      cur = new_token(TK_IDENT, cur, q, p - q);
       continue;
     }
 
@@ -199,6 +202,15 @@ Token *tokenize() {
 *
 ***************************************************************/
 
+// Local variable
+typedef struct Var Var;
+struct Var {
+  Var *next;
+  char *name; // Variable name
+  int offset; // Offset from RBP
+};
+
+
 // Node type of Abstract syntax tree
 typedef enum {
   ND_ADD,
@@ -224,9 +236,29 @@ struct Node {
   Node *next;    // Next node (nodes are seperated by ';')
   Node *lhs;     // pointer to left
   Node *rhs;     // pointer to right
-  char name;     // if kind == ND_VAR
+  Var *var;     // if kind == ND_VAR
   long val;      // only used when kind is ND_NUM
 };
+
+typedef struct Function Function;
+struct Function {
+  Node *node;
+  Var *locals;
+  int stack_size;
+};
+
+// All local variable instances created during parsing are
+// accumulated to this list.
+Var *locals;
+
+// Find a local variable by name.
+static Var *find_var(Token *tok) {
+  for (Var *var = locals; var; var = var->next)
+    if (strlen(var->name) == tok->len && !strncmp(tok->str, var->name, tok->len))
+      return var;
+  return NULL;
+}
+
 
 /** create a new node (token) **/
 Node *new_node(NodeKind kind, Node *lhs, Node *rhs) {
@@ -238,9 +270,9 @@ Node *new_node(NodeKind kind, Node *lhs, Node *rhs) {
 }
 
 // if kind is Variable
-Node *new_var_node(char name) {
+Node *new_var_node(Var *var) {
   Node *node = new_node(ND_VAR, NULL, NULL);
-  node->name = name;
+  node->var = var;
   return node;
 }
 
@@ -251,8 +283,16 @@ Node *new_node_num(int val) {
   node->val = val;
   return node;
 }
+Var *new_lvar(char *name) {
+  Var *var = calloc(1, sizeof(Var));
+  var->next = locals;
+  var->name = name;
+  locals = var;  //var added to the list of locals
+  return var;
+}
 
-Node *program();
+
+Function *program();
 Node *stmt();
 Node *expr();
 Node *assign();
@@ -264,7 +304,8 @@ Node *relational();
 Node *add();
 
 // program = stmt*
-Node *program(void) {
+Function *program() {
+  locals = NULL;
   Node head = {};
   Node *cur = &head;
 
@@ -272,7 +313,14 @@ Node *program(void) {
     cur->next = stmt();
     cur = cur->next;
   }
-  return head.next;
+  Function *prog = calloc(1, sizeof(Function));
+  prog->node = head.next;
+  prog->locals = locals;
+  return prog;
+  // now the pointer prog, has all the local variables and points to the head of the list of 
+  // nodes in the program, nodes are all the statements seperated by ';'
+  // so we call codegen giving it prog, codegen now iterates at all the nodes of the prog, i.e. all the
+  // statements seperated by ;
 }
 /*********************************************
 *       ND_RET __         ___ND_EXPR_STMT
@@ -384,11 +432,20 @@ Node *primary() {
     expect(")");
     return node;
   }
-  // It could be a Identifier
+  // It could be a Identifier, accept that
   Token *tok = consume_ident();
-  if (tok)
-    return new_var_node(*tok->str);
-  // otherwise it should be a number
+  if (tok) {
+    // If the variable had previously appeared, use offset. 
+    // For a new variable, create a new lvar, set a new offset and use that offset.
+    Var *var = find_var(tok);
+    if (!var)
+      var = new_lvar(strndup(tok->str, tok->len));
+      // The strndup() function returns a pointer to a new string which is a
+      // duplicate of the string s but only copies at most n bytes
+    // now that it is ensured that offset is set, create a new node for the variable.
+    return new_var_node(var);
+  }
+  //  except number 
   return new_node_num(expect_number());
 }
 
@@ -403,8 +460,7 @@ Node *primary() {
 // Pushes the given node's address to the stack.
 void gen_addr(Node *node) {
   if (node->kind == ND_VAR) {
-    int offset = (node->name - 'a' + 1) * 8;
-    printf("  lea rax, [rbp-%d]\n", offset);
+    printf("  lea rax, [rbp-%d]\n", node->var->offset);
     printf("  push rax\n");
     return;
   }
@@ -505,7 +561,17 @@ int main(int argc, char **argv) {
   user_input = argv[1];
   token = tokenize(); // token pointer now points to the `head` returned by
                       // tokenizer.
-  Node *node = program();
+  //Node *node = program();
+  Function *prog = program();
+
+  // Assign offsets to local variables.
+  int offset = 0;
+  for (Var *var = prog->locals; var; var = var->next) {
+    offset += 8;
+    var->offset = offset;
+  }
+  prog->stack_size = offset;
+
   // print the first half of the assembly
   printf(".intel_syntax noprefix\n");
   printf(".globl main\n");
@@ -514,14 +580,16 @@ int main(int argc, char **argv) {
   // Prologue, reserve area for 26 variables.
   printf("  push rbp\n");
   printf("  mov rbp, rsp\n");
-  printf("  sub rsp, 208\n");
+  //printf("  sub rsp, 208\n");
   // There are 26 letters in the alphabet,
   // so we push down RSP by 26 x 8 or 208 bytes when calling a function,
   // we will be able to secure the area for all 1-character variables.
 
+  printf("  sub rsp, %d\n", prog->stack_size);
+
   // Traverse AST to generate assembly
-  for (Node *n = node; n; n = n->next) {
-    gen(n);
+  for (Node *node = prog->node; node; node = node->next){
+    gen(node);
   }
   // Epilogue
   printf(".L.return:\n");
