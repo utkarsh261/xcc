@@ -68,6 +68,5 @@ assert 3 'if (1-1) return 2; return 3;'
 assert 2 'if (1) return 2; return 3;'
 assert 2 'if (2-1) return 2; return 3;'
 
-
 printf "\n"
 echo OK

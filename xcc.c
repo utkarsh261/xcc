@@ -366,7 +366,7 @@ Node *stmt() {
     return node;
   }
 
-    if (consume("if")) {
+   if (consume("if")) {
     Node *node = new_node(ND_IF, NULL, NULL);
     expect("(");
     node->cond = expr();
@@ -496,7 +496,7 @@ Node *primary() {
 *
 **************************************************************/
 
-static int labelseq = 1;
+int labelseq = 1;
 
 // Pushes the given node's address to the stack.
 void gen_addr(Node *node) {
@@ -511,13 +511,16 @@ void gen_addr(Node *node) {
 }
 
 void load(void) {
+  // update rax to value of the address it contains. more precisely,
+  // replace the value at the top of the stack with the value it points to,
+  // and set rax to the same value too   
   printf("  pop rax\n");
-  printf("  mov rax, [rax]\n");
+  printf("  mov rax, [rax]\n"); // square bracket used for dereferencing.
   printf("  push rax\n");
 }
 
 void store(void) {
-  printf("  pop rdi\n");
+  printf("  pop rdi\n"); //  value to store is in rdi.
   printf("  pop rax\n");
   printf("  mov [rax], rdi\n");
   printf("  push rdi\n");
@@ -614,6 +617,63 @@ void gen(Node *node) {
   printf("  push rax\n");
 }
 
+/**
+    Debugging functions.
+**/
+
+#define max(a, b) \
+  ({ __typeof__ (a) _a = (a); \
+      __typeof__ (b) _b = (b); \
+    _a > _b ? _a : _b; })
+
+const char* kindNames[] = {"ADD",
+  "SUB",
+  "MUL",
+  "DIV",
+  "NUM",
+  "ASSIGN",
+  "EQ",
+  "NE",
+  "LT",
+  "LE",
+  "VAR",
+  "IF",
+  "EXPR_STMT",
+  "RET"
+  };
+int height(Node* root){
+  if(!root)
+    return 0;
+  
+  int h = max(height(root->lhs), height(root->rhs));
+  return h+1;
+}
+
+void printGivenLevel(struct Node* root, int level) { 
+    if (root == NULL) 
+        return; 
+    if (level == 1) 
+        fprintf(stdout, "%s ", kindNames[root->kind]);
+    else if (level > 1) { 
+        printGivenLevel(root->lhs, level-1); 
+        printGivenLevel(root->rhs, level-1); 
+    } 
+}  
+void printLevelOrder(struct Node* root) 
+{ 
+    int h = height(root); 
+    for (int i=1; i<=h; i++) { 
+        printGivenLevel(root, i); 
+        fprintf(stdout, "%s", " \n");
+    } 
+} 
+ 
+void debug(Node* root){
+  printLevelOrder(root);
+}
+/*******************************/
+
+
 int main(int argc, char **argv) {
   if (argc != 2) {
     error("The number of arguments is incorrect ");
@@ -635,6 +695,10 @@ int main(int argc, char **argv) {
   }
   prog->stack_size = offset;
 
+  //for (Node *node = prog->node; node; node = node->next){
+  //  debug(node);
+  //}
+  
   // print the first half of the assembly
   printf(".intel_syntax noprefix\n");
   printf(".globl main\n");

@@ -4,3 +4,4 @@ tmp*
 a.out
 xcc
 valgrind-out.txt
+debug1.md
