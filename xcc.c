@@ -8,7 +8,7 @@
 /***************************************************
 *
 *                  Tokenizer
-*         Flattens the input into a list of Tokens.
+*      Flattens the input into a list of Tokens.
 *
 ****************************************************/
 
@@ -126,6 +126,27 @@ static bool is_alnum(char c) { return is_alpha(c) || ('0' <= c && c <= '9'); }
 * tokenize the user input and return it, basically creation of a liked list
 ******/
 
+char *starts_with_reserved(char *p) {
+  // Keyword
+  static char *kw[] = {"return", "if", "else"};
+
+  for (int i = 0; i < sizeof(kw) / sizeof(*kw); i++) {
+    int len = strlen(kw[i]);
+    if (startswith(p, kw[i]) && !is_alnum(p[len]))
+      return kw[i];
+  }
+
+  // Multi-letter punctuator
+  static char *ops[] = {"==", "!=", "<=", ">="};
+
+  for (int i = 0; i < sizeof(ops) / sizeof(*ops); i++)
+    if (startswith(p, ops[i]))
+      return ops[i];
+
+  return NULL;
+}
+
+
 Token *tokenize() {
   char *p = user_input;
   Token head;
@@ -139,9 +160,12 @@ Token *tokenize() {
       continue;
     }
 
-    if (startswith(p, "return") && !is_alnum(p[6])) {
-      cur = new_token(TK_RESERVED, cur, p, 6);
-      p += 6;
+    // Keywords or multi-letter punctuators
+    char *keyw = starts_with_reserved(p);
+    if (keyw) {
+      int len = strlen(keyw);
+      cur = new_token(TK_RESERVED, cur, p, len);
+      p += len;
       continue;
     }
 
@@ -151,15 +175,6 @@ Token *tokenize() {
       while (is_alnum(*p))
         p++;
       cur = new_token(TK_IDENT, cur, q, p - q);
-      continue;
-    }
-
-    // Multi letter Punctuator
-    if (startswith(p, "==") || startswith(p, "!=") || startswith(p, "<=") ||
-        startswith(p, ">=")) {
-      cur = new_token(TK_RESERVED, cur, p,
-                      2); // create a new token (node), join to the current.
-      p += 2;
       continue;
     }
 
@@ -190,7 +205,7 @@ Token *tokenize() {
 *
 * Current Grammar:
 * program    = stmt*
-* stmt   = "return"  expr ";" | expr ";"
+* stmt       = "return"  expr ";" | expr ";"
 * expr       = assign
 * assign     = equality ("=" assign)?
 * equality   = relational ("==" relational | "!=" relational)*
@@ -224,6 +239,7 @@ typedef enum {
   ND_LT,        // <
   ND_LE,        // <=
   ND_VAR,       // variable
+  ND_IF,        // if statement
   ND_EXPR_STMT, // expression statement
   ND_RET,       // return statement
 } NodeKind;
@@ -234,8 +250,14 @@ typedef struct Node Node;
 struct Node {
   NodeKind kind; // node type
   Node *next;    // Next node (nodes are seperated by ';')
+
   Node *lhs;     // pointer to left
   Node *rhs;     // pointer to right
+  // "if"
+  Node *cond;
+  Node *then;
+  Node *els;
+
   Var *var;     // if kind == ND_VAR
   long val;      // only used when kind is ND_NUM
 };
@@ -322,6 +344,11 @@ Function *program() {
   // so we call codegen giving it prog, codegen now iterates at all the nodes of the prog, i.e. all the
   // statements seperated by ;
 }
+
+Node *read_expr_stmt(void) {
+  return new_node(ND_EXPR_STMT, expr(), NULL);
+}
+
 /*********************************************
 *       ND_RET __         ___ND_EXPR_STMT
 *                |       |          |
@@ -330,6 +357,7 @@ Function *program() {
 **********************************************/
 
 // stmt = "return" expr ";"
+//      | "if" "(" expr ")" stmt ("else" stmt)?
 //      | expr ";"
 Node *stmt() {
   if (consume("return")) {
@@ -338,7 +366,18 @@ Node *stmt() {
     return node;
   }
 
-  Node *node = new_node(ND_EXPR_STMT, expr(), NULL);
+    if (consume("if")) {
+    Node *node = new_node(ND_IF, NULL, NULL);
+    expect("(");
+    node->cond = expr();
+    expect(")");
+    node->then = stmt();
+    if (consume("else"))
+      node->els = stmt();
+    return node;
+  }
+
+  Node *node = read_expr_stmt();
   expect(";");
   return node;
 }
@@ -457,6 +496,8 @@ Node *primary() {
 *
 **************************************************************/
 
+static int labelseq = 1;
+
 // Pushes the given node's address to the stack.
 void gen_addr(Node *node) {
   if (node->kind == ND_VAR) {
@@ -500,6 +541,28 @@ void gen(Node *node) {
     gen(node->rhs);
     store();
     return;
+  case ND_IF: {
+    int seq = labelseq++;
+    if(node->els){
+      gen(node->cond);
+      printf("  pop rax\n");
+      printf("  cmp rax, 0\n");
+      printf("  je  .L.elseLABEL.%d\n", seq);
+      gen(node->then);
+      printf("  jmp .L.endLABEL.%d\n", seq);
+      printf(".L.elseLABEL.%d:\n", seq);
+      gen(node->els);
+      printf(".L.endLABEL.%d:\n", seq);
+    } else{
+      gen(node->cond);
+      printf("  pop rax\n");
+      printf("  cmp rax, 0\n");
+      printf("  je  .L.endLABEL.%d\n", seq);
+      gen(node->then);
+      printf(".L.endLABEL.%d:\n", seq);
+    }
+    return; 
+  }
   case ND_RET:
     gen(node->lhs);
     printf("  pop rax\n");
