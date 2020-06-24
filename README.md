@@ -24,4 +24,4 @@ Testing as of now is a simple bash script, to add more tests, edit [test.sh](htt
 
 * Supports basic arithmetic operations  (+. -, *, /)
 * Comparison operators (<, <=, >, >=, ==, , !=)
-* Supports single character variable and return statements
+* Supports multiple character variables and return statements
