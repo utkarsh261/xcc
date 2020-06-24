@@ -1,5 +1,7 @@
 # xcc
 
+![C/C++ CI](https://github.com/utkarsh261/xcc/workflows/C/C++%20CI/badge.svg)
+
 xcc is an attempt to write a basic C compiler, based on *Rui Ueyama's* awesome [8cc](https://github.com/rui314/8cc).
 
 Supports x86_64 Linux only, you can use [WSL](https://docs.microsoft.com/en-us/windows/wsl/install-win10?redirectedfrom=MSDN) to run on windows platform.
@@ -25,3 +27,4 @@ Testing as of now is a simple bash script, to add more tests, edit [test.sh](htt
 * Supports basic arithmetic operations  (+. -, *, /)
 * Comparison operators (<, <=, >, >=, ==, , !=)
 * Supports multiple character variables and return statements
+* Supports "if" statements. 
