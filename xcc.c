@@ -1,4 +1,4 @@
-#include <ctype.h>
+
 #include <stdarg.h>
 #include <stdbool.h>
 #include <stdio.h>
@@ -128,7 +128,7 @@ static bool is_alnum(char c) { return is_alpha(c) || ('0' <= c && c <= '9'); }
 
 char *starts_with_reserved(char *p) {
   // Keyword
-  static char *kw[] = {"return", "if", "else"};
+  static char *kw[] = {"return", "if", "else", "while", "for"};
 
   for (int i = 0; i < sizeof(kw) / sizeof(*kw); i++) {
     int len = strlen(kw[i]);
@@ -240,6 +240,8 @@ typedef enum {
   ND_LE,        // <=
   ND_VAR,       // variable
   ND_IF,        // if statement
+  ND_WHILE,	// while statement
+  ND_FOR,       // for statement
   ND_EXPR_STMT, // expression statement
   ND_RET,       // return statement
 } NodeKind;
@@ -253,10 +255,13 @@ struct Node {
 
   Node *lhs;     // pointer to left
   Node *rhs;     // pointer to right
-  // "if"
+
+  // "if" or "while" or "for"
   Node *cond;
   Node *then;
   Node *els;
+  Node *init; // initial value
+  Node *inc;  // increament value
 
   Var *var;     // if kind == ND_VAR
   long val;      // only used when kind is ND_NUM
@@ -358,7 +363,10 @@ Node *read_expr_stmt(void) {
 
 // stmt = "return" expr ";"
 //      | "if" "(" expr ")" stmt ("else" stmt)?
+//      | "while" "(" expr ")" stmt
+//      | "for" "(" expr? ";" expr ";" expr ";" ")" stmt  
 //      | expr ";"
+
 Node *stmt() {
   if (consume("return")) {
     Node *node = new_node(ND_RET, expr(), NULL);
@@ -366,16 +374,45 @@ Node *stmt() {
     return node;
   }
 
-   if (consume("if")) {
+  if (consume("if")) {
     Node *node = new_node(ND_IF, NULL, NULL);
     expect("(");
     node->cond = expr();
     expect(")");
-    node->then = stmt();
+    node->then = stmt(); // Note that for `then` stmt() is called 
+                         // while for `cond` expr() is called.
     if (consume("else"))
       node->els = stmt();
     return node;
   }
+
+  if(consume("while")) {
+    Node *node = new_node(ND_WHILE, NULL, NULL);
+    expect("(");
+    node->cond = expr();
+    expect(")");
+    node->then = stmt();
+    return node;
+  }
+  if(consume("for")){
+    Node* node = new_node(ND_FOR, NULL, NULL);
+    expect("(");
+
+    if(!consume(";")) {
+      node->init = read_expr_stmt();
+      expect(";");
+    }
+    if(!consume(";")){
+      node->cond = expr();
+      expect(";");
+    }
+    if(!consume(")")){
+      node->inc = read_expr_stmt();
+      expect(")");
+    }
+    node->then = stmt();
+    return node;
+  } 
 
   Node *node = read_expr_stmt();
   expect(";");
@@ -565,6 +602,36 @@ void gen(Node *node) {
       printf(".L.endLABEL.%d:\n", seq);
     }
     return; 
+  }
+  case ND_WHILE: {
+    int seq = labelseq++;
+    printf(".L.beginLOOP.%d:\n", seq);
+    gen(node->cond);
+    printf("  pop rax\n");
+    printf("  cmp rax, 0\n");
+    printf("  je .L.endLOOP.%d\n", seq);
+    gen(node->then);
+    printf("  jmp .L.beginLOOP.%d\n", seq);
+    printf(".L.endLOOP.%d:\n", seq);
+    return;
+  }
+  case ND_FOR: {
+    int seq = labelseq++;
+    if(node->init)
+      gen(node->init);
+    printf(".L.beginLOOP.%d:\n", seq);
+    if(node->cond){
+      gen(node->cond);
+      printf("  pop rax\n");
+      printf("  cmp rax, 0\n");
+      printf("  je .L.endLOOP.%d\n", seq);
+    }
+    gen(node->then);
+    if(node->inc)
+      gen(node->inc);
+    printf("  jmp .L.beginLOOP.%d\n", seq);
+    printf(".L.endLOOP.%d:\n", seq);
+    return;
   }
   case ND_RET:
     gen(node->lhs);
