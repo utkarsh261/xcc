@@ -241,6 +241,7 @@ typedef enum {
   ND_VAR,       // variable
   ND_IF,        // if statement
   ND_WHILE,	// while statement
+  ND_BLOCK,     // {}
   ND_FOR,       // for statement
   ND_EXPR_STMT, // expression statement
   ND_RET,       // return statement
@@ -262,6 +263,9 @@ struct Node {
   Node *els;
   Node *init; // initial value
   Node *inc;  // increament value
+  
+  // Block of code, {}
+  Node *body; 
 
   Var *var;     // if kind == ND_VAR
   long val;      // only used when kind is ND_NUM
@@ -365,6 +369,7 @@ Node *read_expr_stmt(void) {
 //      | "if" "(" expr ")" stmt ("else" stmt)?
 //      | "while" "(" expr ")" stmt
 //      | "for" "(" expr? ";" expr ";" expr ";" ")" stmt  
+//      | "{" stmt* "}" 
 //      | expr ";"
 
 Node *stmt() {
@@ -411,6 +416,20 @@ Node *stmt() {
       expect(")");
     }
     node->then = stmt();
+    return node;
+  } 
+  
+  if (consume("{")) {
+    Node head = {};
+    Node* cur = &head;
+
+    while(!consume("}")) {
+      cur->next = stmt();
+      cur = cur->next;
+    }
+
+    Node* node = new_node(ND_BLOCK, NULL, NULL);
+    node->body = head.next;
     return node;
   } 
 
@@ -633,6 +652,11 @@ void gen(Node *node) {
     printf(".L.endLOOP.%d:\n", seq);
     return;
   }
+  case ND_BLOCK:
+    for (Node *n = node->body; n; n=n->next){
+      gen(n);
+    }
+    return;
   case ND_RET:
     gen(node->lhs);
     printf("  pop rax\n");
