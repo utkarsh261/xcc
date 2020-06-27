@@ -24,7 +24,8 @@ Testing as of now is a simple bash script, to add more tests, edit [test.sh](htt
 
 **Current Progress:**
 
+* Converts C-like code to Assembly.
 * Supports basic arithmetic operations  (+. -, *, /)
 * Comparison operators (<, <=, >, >=, ==, , !=)
 * Supports "if-else" statements. 
-* Supports "while" and "for" loops.
+* Supports "while" and "for" loops with block structure.
