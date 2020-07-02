@@ -99,6 +99,14 @@ int expect_number() {
   return val;
 }
 
+// Ensure that the current token is TK_IDENT.
+char *expect_ident(void) {
+  if (token->kind != TK_IDENT)
+    error_at(token->str, "expected an identifier");
+  char *s = strndup(token->str, token->len);
+  token = token->next;
+  return s;
+}
 bool at_eof() { return token->kind == TK_EOF; }
 
 /*****
@@ -206,6 +214,11 @@ Token *tokenize() {
 * Current Grammar:
 * program    = stmt*
 * stmt       = "return"  expr ";" | expr ";"
+*              | "if" "(" expr ")" stmt ("else" stmt)?
+*              | "while" "(" expr ")" stmt
+*              | "for" "(" expr? ";" expr ";" expr ";" ")" stmt  
+*              | "{" stmt* "}" 
+*              | expr ";"
 * expr       = assign
 * assign     = equality ("=" assign)?
 * equality   = relational ("==" relational | "!=" relational)*
@@ -242,6 +255,7 @@ typedef enum {
   ND_IF,        // if statement
   ND_WHILE,	// while statement
   ND_BLOCK,     // {}
+  ND_FUNCALL,   // Function call        
   ND_FOR,       // for statement
   ND_EXPR_STMT, // expression statement
   ND_RET,       // return statement
@@ -267,12 +281,18 @@ struct Node {
   // Block of code, {}
   Node *body; 
 
+  // function name
+  char* funcname;
+  Node* args;
+
   Var *var;     // if kind == ND_VAR
   long val;      // only used when kind is ND_NUM
 };
 
 typedef struct Function Function;
 struct Function {
+  Function *next;
+  char *name;
   Node *node;
   Var *locals;
   int stack_size;
@@ -322,8 +342,8 @@ Var *new_lvar(char *name) {
   return var;
 }
 
-
 Function *program();
+Function *function();
 Node *stmt();
 Node *expr();
 Node *assign();
@@ -334,20 +354,42 @@ Node *unary();
 Node *relational();
 Node *add();
 
-// program = stmt*
+// program = function*
 Function *program() {
+  Function head = {};
+  Function *cur = &head;
+
+  while(!at_eof()) {
+    cur->next = function();
+    cur = cur->next;
+  }
+
+  return head.next;
+}
+
+// function = ident "(" ")" "{" stmt* "}"
+Function *function(){ 
   locals = NULL;
+
+  char *name = expect_ident();
+  expect("(");
+  expect(")");
+  expect("{");
+
   Node head = {};
   Node *cur = &head;
 
-  while (!at_eof()) {
+  while (!consume("}")) {
     cur->next = stmt();
     cur = cur->next;
   }
-  Function *prog = calloc(1, sizeof(Function));
-  prog->node = head.next;
-  prog->locals = locals;
-  return prog;
+  Function *fn = calloc(1, sizeof(Function));
+  fn->name = name;
+  fn->node = head.next;
+  fn->locals = locals;
+  return fn;
+
+  // Comment for some old code;
   // now the pointer prog, has all the local variables and points to the head of the list of 
   // nodes in the program, nodes are all the statements seperated by ';'
   // so we call codegen giving it prog, codegen now iterates at all the nodes of the prog, i.e. all the
@@ -402,7 +444,7 @@ Node *stmt() {
   if(consume("for")){
     Node* node = new_node(ND_FOR, NULL, NULL);
     expect("(");
-
+  
     if(!consume(";")) {
       node->init = read_expr_stmt();
       expect(";");
@@ -519,7 +561,23 @@ Node *unary() {
   return primary();
 }
 
-// primary = "(" expr ")" | ident | num
+// func-args = "(" (assign ("," assign)*)? ")"
+
+Node* func_args(){
+  if(consume(")"))
+    return NULL;
+
+  Node *head = assign();
+  Node *cur = head;
+  while(consume(",")){
+    cur->next = assign();
+    cur = cur->next;
+  }
+  expect(")");
+  return head;
+}
+
+// primary = "(" expr ")" | ident func-args? | num
 Node *primary() {
   // if next token is "(" it should be a "(" expr ")"
   if (consume("(")) {
@@ -530,6 +588,16 @@ Node *primary() {
   // It could be a Identifier, accept that
   Token *tok = consume_ident();
   if (tok) {
+    // Function call
+    if(consume("(")){
+      Node* node = new_node(ND_FUNCALL, NULL, NULL);
+      node->funcname = strndup(tok->str, tok->len);
+      node->args = func_args();
+      return node;
+    }
+    
+    // Variable
+
     // If the variable had previously appeared, use offset. 
     // For a new variable, create a new lvar, set a new offset and use that offset.
     Var *var = find_var(tok);
@@ -553,6 +621,8 @@ Node *primary() {
 **************************************************************/
 
 int labelseq = 1;
+char *argreg[] = {"rdi", "rsi", "rdx", "rcx", "r8", "r9"}; 
+char *funcname;
 
 // Pushes the given node's address to the stack.
 void gen_addr(Node *node) {
@@ -657,10 +727,39 @@ void gen(Node *node) {
       gen(n);
     }
     return;
+  case ND_FUNCALL: {
+    int nargs = 0;
+    for (Node* arg = node->args;arg;arg = arg=arg->next) {
+      gen(arg);
+      nargs++;
+    }
+    for (int i = nargs - 1; i >= 0; i--){
+      printf("  pop %s\n", argreg[i]);
+    }
+  
+    // We need to align RSP to a 16 byte boundary before
+    // calling a function because it is an ABI requirement.
+    // RAX is set to 0 for variadic function.
+    int seq = labelseq++;
+    printf("  mov rax, rsp\n");
+    printf("  and rax, 15\n");
+    printf("  jnz .L.call.%d\n", seq);
+    printf("  mov rax, 0\n");
+    printf("  call %s\n", node->funcname);
+    printf("  jmp .L.end.%d\n", seq);
+    printf(".L.call.%d:\n", seq);
+    printf("  sub rsp, 8\n");
+    printf("  mov rax, 0\n");
+    printf("  call %s\n", node->funcname);
+    printf("  add rsp, 8\n");
+    printf(".L.end.%d:\n", seq);
+    printf("  push rax\n");
+    return;
+  } 
   case ND_RET:
     gen(node->lhs);
     printf("  pop rax\n");
-    printf("  jmp .L.return\n");
+    printf("  jmp .L.return.%s\n", funcname);
     return;
   }
   gen(node->lhs);
@@ -778,13 +877,15 @@ int main(int argc, char **argv) {
   //Node *node = program();
   Function *prog = program();
 
-  // Assign offsets to local variables.
-  int offset = 0;
-  for (Var *var = prog->locals; var; var = var->next) {
-    offset += 8;
-    var->offset = offset;
+  for (Function *fn = prog; fn; fn = fn->next) { 
+    // Assign offsets to local variables.
+    int offset = 0;
+    for (Var *var = prog->locals; var; var = var->next) {
+      offset += 8;
+      var->offset = offset;
+    }
+    fn->stack_size = offset;
   }
-  prog->stack_size = offset;
 
   //for (Node *node = prog->node; node; node = node->next){
   //  debug(node);
@@ -792,28 +893,27 @@ int main(int argc, char **argv) {
   
   // print the first half of the assembly
   printf(".intel_syntax noprefix\n");
-  printf(".globl main\n");
-  printf("main:\n");
+  
+  for (Function *fn = prog; fn; fn = fn->next) {
+    printf(".global %s\n", fn->name);
+    printf("%s:\n", fn->name);
+    funcname = fn->name;
+    
+    // Prologue
+    printf("  push rbp\n");
+    printf("  mov rbp, rsp\n");
+    printf("  sub rsp, %d\n", fn->stack_size);
 
-  // Prologue, reserve area for 26 variables.
-  printf("  push rbp\n");
-  printf("  mov rbp, rsp\n");
-  //printf("  sub rsp, 208\n");
-  // There are 26 letters in the alphabet,
-  // so we push down RSP by 26 x 8 or 208 bytes when calling a function,
-  // we will be able to secure the area for all 1-character variables.
+    // Traverse AST to generate assembly
+    for (Node *node = fn->node; node; node = node->next){
+      gen(node);
+    }
 
-  printf("  sub rsp, %d\n", prog->stack_size);
-
-  // Traverse AST to generate assembly
-  for (Node *node = prog->node; node; node = node->next){
-    gen(node);
+    // Epilogue
+    printf(".L.return.%s:\n", funcname);
+    printf("  mov rsp, rbp\n");
+    printf("  pop rbp\n");
+    printf("  ret\n");
   }
-  // Epilogue
-  printf(".L.return:\n");
-  printf("  mov rsp, rbp\n");
-  printf("  pop rbp\n");
-
-  printf("  ret\n");
   return 0;
 }
